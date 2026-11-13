@@ -25,7 +25,11 @@ def create_app(test_config=None):
 
     @app.get("/")
     def index():
-        return jsonify(service="cloud-tasks-api", message="API de tarefas em nuvem", endpoints=["/health", "/tasks"])
+        return jsonify(service="cloud-tasks-api", message="API de tarefas em nuvem", endpoints=["/health", "/tasks", "/version"])
+
+    @app.get("/version")
+    def version():
+        return jsonify(service="cloud-tasks-api", version=os.environ.get("APP_VERSION", "1.0.0")), 200
 
     @app.get("/health")
     def health():
@@ -38,8 +42,22 @@ def create_app(test_config=None):
 
     @app.get("/tasks")
     def list_tasks():
+        done_param = request.args.get("done")
+        query = "SELECT id, title, done FROM tasks"
+        params = ()
+        if done_param is not None:
+            normalized = done_param.strip().lower()
+            if normalized in ("true", "1"):
+                query += " WHERE done = ?"
+                params = (1,)
+            elif normalized in ("false", "0"):
+                query += " WHERE done = ?"
+                params = (0,)
+            else:
+                return jsonify(error="done deve ser true ou false"), 400
+        query += " ORDER BY id"
         with connect() as db:
-            items = db.execute("SELECT id, title, done FROM tasks ORDER BY id").fetchall()
+            items = db.execute(query, params).fetchall()
         return jsonify([dict(id=r["id"], title=r["title"], done=bool(r["done"])) for r in items])
 
     @app.post("/tasks")
@@ -67,6 +85,15 @@ def create_app(test_config=None):
         if not cursor.rowcount:
             return jsonify(error="tarefa nao encontrada"), 404
         return jsonify(id=task_id, done=data["done"]), 200
+
+    @app.delete("/tasks/<int:task_id>")
+    def delete_task(task_id):
+        with connect() as db:
+            cursor = db.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+            db.commit()
+        if not cursor.rowcount:
+            return jsonify(error="tarefa nao encontrada"), 404
+        return "", 204
 
     return app
 
